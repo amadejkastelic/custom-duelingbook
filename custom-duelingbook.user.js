@@ -2090,6 +2090,9 @@
         }
     }
     function hideProfilePictures() {
+        let avatar1 = document.getElementById('avatar1');
+        avatar1.style.background = 'linear-gradient(0deg, #DB3399, #b53389)';
+
         const pfpUrls = getConfigEntry('pfpUrls').split('\n').map(p => p.trim()).filter(p => !!p);
         const ownPfpUrl = getConfigEntry('ownPfpUrl');
         const bottomUsername = document.querySelector('#avatar1 .username_txt').textContent;
