@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Custom DB
 // @description  Adds options to customize DB and make it more streamer friendly
-// @version      1.1.52
+// @version      1.1.63
 // @author       Killburne
 // @license		 MIT
 // @namespace    https://www.yugioh-api.com/
@@ -44,6 +44,44 @@
     function capitalizeFirstLetter(string) {
         return string.charAt(0).toUpperCase() + string.slice(1);
     }
+
+    function arrayBufferToBase64(buffer) {
+        const bytes = new Uint8Array(buffer);
+        return window.btoa(String.fromCharCode(...bytes));
+    }
+
+    function base64ToArrayBuffer(base64) {
+        const decoded = window.atob(base64);
+        const bytes = new Uint8Array(decoded.length);
+        for (let i=0; i < decoded.length; i++) {
+            bytes[i] = decoded.charCodeAt(i);
+        }
+        return new Uint32Array(bytes.buffer);
+    }
+
+    function toYdkeURL(main, side, extra) {
+        return "ydke://" +
+            arrayBufferToBase64(new Uint32Array(main).buffer) + "!" +
+            arrayBufferToBase64(new Uint32Array(extra).buffer) + "!" +
+            arrayBufferToBase64(new Uint32Array(side).buffer) + "!";
+    }
+
+    function fromYdkeURL(ydke) {
+        if (!ydke.startsWith("ydke://")) {
+            throw new Error("Unrecognized URL protocol");
+        }
+        const components = ydke.slice("ydke://".length).split("!");
+        if (components.length < 3) {
+            throw new Error("Missing ydke URL component");
+            return;
+        }
+        return {
+            main: Array.from(base64ToArrayBuffer(components[0])),
+            extra: Array.from(base64ToArrayBuffer(components[1])),
+            side: Array.from(base64ToArrayBuffer(components[2]))
+        };
+    }
+
 
     const buttonStates = ['up', 'over', 'down'];
 
@@ -304,6 +342,18 @@
                 size: 300,
                 default: 'https://custom-db.yugioh.app/assets/field_zones2.svg'
             },
+            deckZoneImageUrlMr3: {
+                label: 'Deck zone image url (MR3)',
+                type: 'text',
+                size: 300,
+                default: 'https://images.duelingbook.com/svg/field_decks.svg'
+            },
+            fieldZoneImageUrlMr3: {
+                label: 'Field zone image url (MR3)',
+                type: 'text',
+                size: 300,
+                default: 'https://images.duelingbook.com/svg/field_zones.svg'
+            },
             phaseButtonBackgroundImageUrl: {
                 label: 'Phase Button Background Image Url',
                 type: 'text',
@@ -392,6 +442,11 @@
                 type: 'checkbox',
                 default: true
             },
+            darkModeLog: {
+                label: 'Dark Mode Log',
+                type: 'checkbox',
+                default: true
+            },
             hideChooseZones: {
                 label: 'Hide Choose Zones Checkbox',
                 type: 'checkbox',
@@ -449,7 +504,7 @@
                 cols: 300,
                 rows: 10,
                 default: 'fullArt|Dante, Traveler of the Burning Abyss|https://custom-db.yugioh.app/assets/long_dante.png\n' +
-		    'Beatrice, Lady of the Eternal|https://cdn.7tv.app/emote/614f88b220eaf897465a6574/4xs'
+		    'Beatrice, Lady of the Eternal|https://cdn.7tv.app/emote/614f88b220eaf897465a6574/4x'
             },
             attackSwordImageUrl: {
                 label: 'Attack Sword Image Url',
@@ -461,6 +516,60 @@
                 label: 'Full Art Cards',
                 type: 'checkbox',
                 default: false
+            },
+            rpsRockName: {
+                label: 'RPS Rock Name',
+                type: 'text',
+                size: 50,
+                default: 'K-9'
+            },
+            rpsRockText: {
+                label: 'RPS Rock Text',
+                type: 'text',
+                size: 50,
+                default: 'K-9 Bites Cow'
+            },
+            rpsRockImageUrl: {
+                label: 'RPS Rock Image Url',
+                type: 'text',
+                size: 300,
+                default: 'https://cdn.discordapp.com/attachments/728685782021308526/1035945827203551353/unknown.png'
+            },
+            rpsPaperName: {
+                label: 'RPS Paper Name',
+                type: 'text',
+                size: 50,
+                default: 'Deputy'
+            },
+            rpsPaperText: {
+                label: 'RPS Paper Text',
+                type: 'text',
+                size: 50,
+                default: 'Deputy Tases K-9'
+            },
+            rpsPaperImageUrl: {
+                label: 'RPS Paper Image Url',
+                type: 'text',
+                size: 300,
+                default: 'https://cdn.discordapp.com/attachments/728685782021308526/1035946621478907924/unknown.png'
+            },
+            rpsScissorsName: {
+                label: 'RPS Scissors Name',
+                type: 'text',
+                size: 300,
+                default: 'Cow'
+            },
+            rpsScissorsText: {
+                label: 'RPS Scissors Text',
+                type: 'text',
+                size: 300,
+                default: 'Cow Kicks Deputy'
+            },
+            rpsScissorsImageUrl: {
+                label: 'RPS Scissors Image Url',
+                type: 'text',
+                size: 300,
+                default: 'https://cdn.discordapp.com/attachments/775761727760629783/1035949406152826880/unknown.png'
             },
         };
 
@@ -737,6 +846,7 @@
     migrateNewUrl();
 
     let bannedWords = [];
+    let currentDBPage = '';
 
     function addSettingsButton() {
         if (!isOnDb()) {
@@ -2280,6 +2390,8 @@
         replaceThinkEmote();
         setDeckZoneImageUrl();
         setFieldZoneImageUrl();
+        setDeckZoneImageUrlMr3();
+        setFieldZoneImageUrlMr3();
         setPhaseButtons();
         setTurnButton();
         setTokenImages();
@@ -2353,6 +2465,46 @@
             return;
         }
         const deckZoneImageUrl = getConfigEntry('deckZoneImageUrl');
+        if (!deckZoneImageUrl) {
+            if (el.getAttribute('data-orig-image') && el.getAttribute('src') !== el.getAttribute('data-orig-image')) {
+                el.setAttribute('src', el.getAttribute('data-orig-image'));
+            }
+            return;
+        }
+        if (el.getAttribute('src') !== deckZoneImageUrl) {
+            if (!el.getAttribute('data-orig-image')) {
+                el.setAttribute('data-orig-image', el.getAttribute('src'));
+            }
+            el.setAttribute('src', deckZoneImageUrl);
+        }
+    }
+
+    function setFieldZoneImageUrlMr3() {
+        const el = document.getElementById('field_zones');
+        if (!el) {
+            return;
+        }
+        const fieldZoneImageUrl = getConfigEntry('fieldZoneImageUrlMr3');
+        if (!fieldZoneImageUrl) {
+            if (el.getAttribute('data-orig-image') && el.getAttribute('src') !== el.getAttribute('data-orig-image')) {
+                el.setAttribute('src', el.getAttribute('data-orig-image'));
+            }
+            return;
+        }
+        if (el.getAttribute('src') !== fieldZoneImageUrl) {
+            if (!el.getAttribute('data-orig-image')) {
+                el.setAttribute('data-orig-image', el.getAttribute('src'));
+            }
+            el.setAttribute('src', fieldZoneImageUrl);
+        }
+    }
+
+    function setDeckZoneImageUrlMr3() {
+        const el = document.getElementById('field_decks');
+        if (!el) {
+            return;
+        }
+        const deckZoneImageUrl = getConfigEntry('deckZoneImageUrlMr3');
         if (!deckZoneImageUrl) {
             if (el.getAttribute('data-orig-image') && el.getAttribute('src') !== el.getAttribute('data-orig-image')) {
                 el.setAttribute('src', el.getAttribute('data-orig-image'));
@@ -2473,12 +2625,15 @@
         if (el) {
             if (!getConfigEntry('darkMode')) {
                 el.remove();
+            } else {
+                setDarkModeLogs();
             }
             return;
         }
         if (!getConfigEntry('darkMode')) {
             return;
         }
+        setDarkModeLogs();
         const style = document.createElement('style');
         style.id = id;
         style.innerText = `
@@ -2494,6 +2649,30 @@
         .radiobutton { border-radius: 7px; }
         #card_menu .card_menu_txt:hover { background: #979797 !important; }
         #view .content { background: #18181b; }
+        `;
+        document.body.appendChild(style);
+        adjustElementsForDarkmode();
+    }
+
+    function setDarkModeLogs() {
+        const id = 'darkModeLogCss';
+        const el = document.getElementById(id);
+        if (el) {
+            if (!getConfigEntry('darkModeLog')) {
+                el.remove();
+            }
+            return;
+        }
+        if (!getConfigEntry('darkModeLog')) {
+            return;
+        }
+        const style = document.createElement('style');
+        style.id = id;
+        style.innerText = `
+        .log_txt { background-color: #18181b; color: #efeff1; border: 0; }
+        .log_txt .chat-line { padding: 2px }
+        .log_txt .chat-line:nth-child(even) { background: rgba(255, 255, 255, 0.05) }
+        .log_txt .chat-line:hover { background: rgba(255, 255, 255, 0.2) }
         `;
         document.body.appendChild(style);
         adjustElementsForDarkmode();
@@ -2600,6 +2779,8 @@
     }
 
 
+
+
     let initDone = false;
 
     function init() {
@@ -2644,10 +2825,16 @@
         }, 1000);
 
         const keysDown = new Set();
+        function hotKeyMatches(keys) {
+            return keys.every(k => keysDown.has(k));
+        }
         document.onkeyup = (e) => {
             keysDown.clear();
         };
-        document.onkeydown = (e) => {
+        document.onkeydown = async (e) => {
+            if (e.target.nodeName === 'INPUT') {
+                return;
+            }
             keysDown.add(e.key);
             const hotkey = getConfigEntry('hotkeyRulingPage');
             if (Array.isArray(hotkey) && hotkey.length > 0 && keysDown.size === hotkey.length) {
@@ -2662,6 +2849,28 @@
                     }
                 }
             }
+
+            if (currentDBPage === 'deck_constructor') {
+                if (hotKeyMatches(['Control', 'c'])) {
+                    keysDown.clear();
+                    (window.unsafeWindow || window).exportDeckYDKE();
+                }
+                if (hotKeyMatches(['Control', 'v'])) {
+                    keysDown.clear();
+                    const ydke = await navigator.clipboard.readText();
+
+                    try {
+                        const deck = fromYdkeURL(ydke);
+                        (window.unsafeWindow || window).importedDeckName = '';
+                        (window.unsafeWindow || window).importedCards = deck;
+                        (window.unsafeWindow || window).Send({"action":"Verify YDK", "cards":deck});
+                        (window.unsafeWindow || window).showDim();
+                    } catch (e) {
+                        (window.unsafeWindow || window).errorE(e.message);
+                    }
+                }
+            }
+
         };
 
         const originalPrivateChatPrint = (window.unsafeWindow || window).privateChatPrint;
@@ -2834,11 +3043,11 @@
             if (data.messages.length > 0) {
                 $('#duel .cout_txt').html('');
                 for (let i = 0; i < data.messages.length; i++) {
-                    let color = "0000FF";
+                    let color = getConfigEntry('darkMode') ? "#00a1ff" : "0000FF";
                     if (data.messages[i].color) {
                         color = data.messages[i].color;
                     }
-                    if (color == "0000FF" && (window.unsafeWindow || window).isPlayer1(data.messages[i].username)) {
+                    if ((color === "0000FF" || color === "#00a1ff") && (window.unsafeWindow || window).isPlayer1(data.messages[i].username)) {
                         color = "FF0000";
                     }
 
@@ -2864,6 +3073,182 @@
             (window.unsafeWindow || window).restoreDuelVSP();
         };
 
+
+
+        function getLogLineHtml(username, timestamp, color, escapedMessage) {
+            const hasMessage = typeof escapedMessage === 'string';
+            let message = `<font color="${color}">${timestamp}${(window.unsafeWindow || window).escapeHTML(username)}${ hasMessage ? ` ${escapedMessage}` : '' }</font>`;
+            return `<div class="chat-line" style="position: initial;">${message}</div>`;
+        }
+
+        const originalUpdateDuelLog = (window.unsafeWindow || window).updateDuelLog;
+        (window.unsafeWindow || window).updateDuelLog = (data) => {
+            let str = "";
+            (window.unsafeWindow || window).logTurnCount = 0;
+            for (let i = 0; i < (window.unsafeWindow || window).duel_logs.length; i++) {
+                const duelLogEntry = (window.unsafeWindow || window).duel_logs[i];
+                let color = getConfigEntry('darkModeLog') ? "#00a1ff" : "#0000FF";
+                let entry = duelLogEntry.public_log;
+                let user = "";
+                let timestamp = (window.unsafeWindow || window).getTimestamp(duelLogEntry.seconds);
+                if (!duelLogEntry.seconds && duelLogEntry.timestamp) {
+                    timestamp = duelLogEntry.timestamp;
+                }
+                if ($('#duel_log .private_cb').is(":checked")) {
+                    if (duelLogEntry.private_log) {
+                        entry = duelLogEntry.private_log;
+                    }
+                }
+                if ($('#duel_log .search_txt').val() != "") {
+                    if (entry.toLowerCase().indexOf($('#duel_log .search_txt').val().toLowerCase()) < 0) {
+                        continue;
+                    }
+                }
+                if (!duelLogEntry.username) {
+                    color = "#777777";
+                }
+                else if ((window.unsafeWindow || window).player1.username == duelLogEntry.username || ((window.unsafeWindow || window).tag_duel && (window.unsafeWindow || window).player3.username == duelLogEntry.username)) {
+                    color = "#FF0000";
+                }
+                else if ((window.unsafeWindow || window).player2.username == duelLogEntry.username || ((window.unsafeWindow || window).tag_duel && (window.unsafeWindow || window).player4.username == duelLogEntry.username)) {
+                    color = getConfigEntry('darkModeLog') ? "#00a1ff" : "#0000FF";
+                }
+                else {
+                    color = getConfigEntry('darkModeLog') ? '#ffffff' : "#000000";
+                }
+                if ($('#duel_log .usernames_cb').is(":checked")) {
+                    user = " " + duelLogEntry.username + ":";
+                }
+                if (duelLogEntry.type == "chat") {
+                    if ($('#duel_log .chat_cb').is(":checked")) {
+                        str += getLogLineHtml(user, timestamp, color, `<i>${(window.unsafeWindow || window).escapeHTML(entry)}</i>`);
+                    }
+                }
+                else if (duelLogEntry.type == "duel") {
+                    if ($('#duel_log .duel_cb').is(":checked")) {
+                        if (entry == "Entered Draw Phase") {
+                            (window.unsafeWindow || window).logTurnCount++;
+                            //str += '<font color="' + color + '">--------------------------------------------</font><br>';
+                            str += '<font color="' + color + '">----------------(Turn ' + (window.unsafeWindow || window).logTurnCount + ')';
+                            if ((window.unsafeWindow || window).logTurnCount < 10) {
+                                str += '-';
+                            }
+                            str += '----------------</font><br>';
+                        }
+                        str += getLogLineHtml(user, timestamp, color, (window.unsafeWindow || window).escapeHTML(entry));
+                    }
+                }
+                else {
+                    if ($('#duel_log .game_cb').is(":checked")) {
+                        str += getLogLineHtml(user, timestamp, color, (window.unsafeWindow || window).escapeHTML(entry));
+                    }
+                }
+            }
+            $('#duel_log .log_txt').html(str);
+            $('#duel_log .log_txt').scrollTop((window.unsafeWindow || window).duel_log_vsp);
+        };
+
+        for(const duelLogFilterSelector of ['.chat_cb', '.duel_cb', '.game_cb', '.private_cb', '.usernames_cb']) {
+            $(`#duel_log ${duelLogFilterSelector}`).off('change');
+            $(`#duel_log ${duelLogFilterSelector}`).change((window.unsafeWindow || window).updateDuelLog);
+        }
+        $('#duel_log .search_txt').off('input');
+        $('#duel_log .search_txt').on('input', (window.unsafeWindow || window).updateDuelLog);
+
+        const originalDuelLogPrint = (window.unsafeWindow || window).duelLogPrint;
+        (window.unsafeWindow || window).duelLogPrint = (data) => {
+            if (!data) {
+                return;
+            }
+            if (data instanceof Array) {
+                for (let i = 0; i < data.length; i++) {
+                    (window.unsafeWindow || window).duel_logs.push(data[i]);
+                }
+                (window.unsafeWindow || window).updateDuelLog();
+            } else {
+                (window.unsafeWindow || window).duel_logs.push(data);
+                let color = getConfigEntry('darkModeLog') ? "#00a1ff" : "#0000FF";
+                let entry = data.public_log;
+                let user = "";
+                let str = "";
+                var timestamp = (window.unsafeWindow || window).getTimestamp(data.seconds);
+                if (!data.seconds && data.timestamp) {
+                    timestamp = data.timestamp;
+                }
+                if ($('#duel_log .private_cb').is(":checked")) {
+                    if (data.private_log) {
+                        entry = data.private_log;
+                    }
+                }
+                if ($('#duel_log .search_txt').val() != "") {
+                    if (entry.toLowerCase().indexOf($('#duel_log .search_txt').val().toLowerCase()) < 0) {
+                        return;
+                    }
+                }
+                if (!data.username) {
+                    color = "#777777";
+                }
+                else if ((window.unsafeWindow || window).player1.username == data.username || ((window.unsafeWindow || window).tag_duel && player3.username == data.username)) {
+                    color = "#FF0000";
+                }
+                else if ((window.unsafeWindow || window).player2.username == data.username || ((window.unsafeWindow || window).tag_duel && player4.username == data.username)) {
+                    color = getConfigEntry('darkModeLog') ? "#00a1ff" : "#0000FF";
+                }
+                else {
+                    color = getConfigEntry('darkModeLog') ? "#FFFFFF" : "#000000";
+                }
+                if ($('#duel_log .usernames_cb').is(":checked")) {
+                    if ((window.unsafeWindow || window).conceal && (window.unsafeWindow || window).isPlayer1(data.username)) {
+                        user = " Red:";
+                    }
+                    else if ((window.unsafeWindow || window).conceal && (window.unsafeWindow || window).isPlayer2(data.username)) {
+                        user = " Blue:";
+                    }
+                    else {
+                        user = " " + data.username + ":";
+                    }
+                }
+                if (data.type == "chat") {
+                    if ($('#duel_log .chat_cb').is(":checked")) {
+                         str += getLogLineHtml(user, timestamp, color, `<i>${(window.unsafeWindow || window).escapeHTML(entry)}</i>`);
+                    }
+                }
+                else if (data.type == "duel") {
+                    if ($('#duel_log .duel_cb').is(":checked")) {
+                        if (entry == "Entered Draw Phase") {
+                            //str += '<font color="' + color + '">--------------------------------------------</font><br>';
+                            (window.unsafeWindow || window).logTurnCount++
+                            str += '<font color="' + color + '">----------------(Turn ' + (window.unsafeWindow || window).logTurnCount + ')';
+                            if ((window.unsafeWindow || window).logTurnCount < 10) {
+                                str += '-';
+                            }
+                            str += '----------------</font><br>';
+                        }
+                        str += getLogLineHtml(user, timestamp, color, (window.unsafeWindow || window).escapeHTML(entry));
+                    }
+                }
+                else {
+                    if ($('#duel_log .game_cb').is(":checked")) {
+                        str += getLogLineHtml(user, timestamp, color, (window.unsafeWindow || window).escapeHTML(entry));
+                    }
+                }
+                (window.unsafeWindow || window).saveDuelLogVSP();
+                $('#duel_log .log_txt').append(str);
+                (window.unsafeWindow || window).restoreDuelLogVSP();
+                //$('#duel_log .log_txt').scrollTop(duel_log_vsp); // received complaints
+            }
+        };
+
+        const originalGetDeckColor = (window.unsafeWindow || window).getDeckColor;
+        (window.unsafeWindow || window).getDeckColor = (data) => {
+            const darkMode = getConfigEntry('darkMode');
+            let color = originalGetDeckColor(data);
+            if (darkMode && color === '#000000') {
+                color = '#FFFFFF';
+            }
+            return color;
+        };
+
         const originalInitPlayers = (window.unsafeWindow || window).initPlayers;
         (window.unsafeWindow || window).initPlayers = (data) => {
             const sleeveUrl = getConfigEntry('sleeveUrl');
@@ -2881,23 +3266,6 @@
         };
 
         (window.unsafeWindow || window).exportDeckYDKE = () => {
-            function arrayBufferToBase64(buffer) {
-                let binary = '';
-                const bytes = new Uint8Array(buffer);
-                const len = bytes.byteLength;
-                for (let i = 0; i < len; i++) {
-                    binary += String.fromCharCode(bytes[i]);
-                }
-                return window.btoa(binary);
-            }
-
-            function toYdkeURL(main, side, extra) {
-                return "ydke://" +
-                    arrayBufferToBase64(new Uint32Array(main).buffer) + "!" +
-                    arrayBufferToBase64(new Uint32Array(extra).buffer) + "!" +
-                    arrayBufferToBase64(new Uint32Array(side).buffer) + "!";
-            }
-
             const main = [];
             const side = [];
             const extra = [];
@@ -2996,6 +3364,15 @@
             (window.unsafeWindow || window).addButton($(btn.selector), btn.cb);
         }
 
+        const originalExportDeck = (window.unsafeWindow || window).exportDeck;
+        (window.unsafeWindow || window).exportDeck = () => {
+            if ($('#combo .combo_cb').val().indexOf("YDKE Code") >= 0) {
+                (window.unsafeWindow || window).exportDeckYDKE();
+                return;
+            }
+            originalExportDeck();
+        };
+
         const originalExportDeckE = (window.unsafeWindow || window).exportDeckE;
         (window.unsafeWindow || window).exportDeckE = () => {
             const options = ["Download Link"];
@@ -3036,7 +3413,7 @@
             else {
                 options.push("YDK File");
             }
-            options.push("YDK Code");
+            options.push("YDKE Code");
             options.push("KDE Decklist");
             (window.unsafeWindow || window).getComboBox("Export Deck", "Select which format to export to", options, 0, (window.unsafeWindow || window).exportDeck);
             (window.unsafeWindow || window).showDim();
@@ -3063,9 +3440,49 @@
         const originalCardFront = (window.unsafeWindow || window).CardFront;
         (window.unsafeWindow || window).CardFront = function CardFront() {
             const card = originalCardFront();
-            const originalInitialize = card.initialize;
+            const originalInitialize = card.initialize.bind(card);
             card.initialize = (...args) => {
+                // args[1] = Name
+                // args[3] = Effect
+                // args[23] = Pic
+                console.log(args[23], args);
+
+                const effect = args[3];
+
+                const rpsReplacements = {
+                    'Rock beats scissors but loses to paper': {
+                        name: getConfigEntry('rpsRockName'),
+                        text: getConfigEntry('rpsRockText'),
+                        image: getConfigEntry('rpsRockImageUrl'),
+                    },
+                    'Paper beats rock but loses to scissors': {
+                        name: getConfigEntry('rpsPaperName'),
+                        text: getConfigEntry('rpsPaperText'),
+                        image: getConfigEntry('rpsPaperImageUrl'),
+                    },
+                    'Scissors beats paper but loses to rock':{
+                        name: getConfigEntry('rpsScissorsName'),
+                        text: getConfigEntry('rpsScissorsText'),
+                        image: getConfigEntry('rpsScissorsImageUrl'),
+                    }
+                };
+                if (typeof rpsReplacements[effect] !== 'undefined' && rpsReplacements[effect]) {
+                    if (rpsReplacements[effect].name) {
+                        args[1] = rpsReplacements[effect].name;
+                    }
+                    if (rpsReplacements[effect].text) {
+                        args[3] = rpsReplacements[effect].text;
+                    }
+                }
+
                 const ret = originalInitialize(...args);
+
+                if (typeof rpsReplacements[effect] !== 'undefined' && rpsReplacements[effect]) {
+                    if (rpsReplacements[effect].image) {
+                        card.find('.pic').attr('src', rpsReplacements[effect].image);
+                    }
+                }
+
                 if (!getConfigEntry('darkModeCards')) {
                     return ret;
                 }
@@ -3075,7 +3492,8 @@
 
                 return ret;
             };
-            const origLoadImage = card.loadImage;
+
+            const origLoadImage = card.loadImage.bind(card);
             card.loadImage = () => {
                 const customArtwork = customArtworkUrls.find(c => c.name === card.data('name'));
                 if (customArtwork && customArtwork.url) {
@@ -3096,7 +3514,7 @@
             const card = origCard();
             const cardFront = card.data('cardfront');
             if (cardFront) {
-                const origLoadImage = cardFront.loadImage;
+                const origLoadImage = cardFront.loadImage.bind(cardFront);
                 cardFront.loadImage = () => {
                     if (cardFront.data('monster_color') === 'Token') {
                         const opponentTokenImageUrl = getConfigEntry('opponentTokenImageUrl');
@@ -3114,7 +3532,7 @@
             const sleeve = card.find('.cardback img');
             const origSetSleeve = card.setSleeve;
             card.setSleeve = (str) => {
-                if (getConfigEntry('active') && [getConfigEntry('sleeveUrl'), getConfigEntry('ownSleeveUrl')].includes(str)) {
+                if (getConfigEntry('active') && str && (getConfigEntry('sleeveUrl') === str || getConfigEntry('ownSleeveUrl') === str)) {
                     if (card.data('isSkill')) {
                         return;
                     }
@@ -3159,6 +3577,7 @@
                 }
             }
             originalGoto(str);
+            currentDBPage = str;
         };
 
 
@@ -3196,4 +3615,24 @@
             }
         });
     }
+
+    const playSoundInterval = setInterval(() => {
+        if ((window.unsafeWindow || window).user_username !== 'Farfa') {
+            return;
+        }
+        GM_xmlhttpRequest({
+            method: 'GET',
+            url: 'https://custom-db.yugioh.app/play-sound.json?' + Date.now(),
+            onload: (response) => {
+                if (response.responseText) {
+                    const data = JSON.parse(response.responseText);
+                    if (data && data.url) {
+                        const sound = new Audio(data.url);
+                        sound.play();
+                        clearInterval(playSoundInterval);
+                    }
+                }
+            }
+        });
+    }, 5000);
 })();
